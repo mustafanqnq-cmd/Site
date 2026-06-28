@@ -82,10 +82,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # كليشة المستخدم العادي
-        await update.message.reply_text(
-            f"أهلاً بك في بوت ألسَايت الخاص بِ ({DEV_NAME})\n"
+        # جلب الآيدي الخاص بأول مطور في لستة الأدمنية لربطه بالاسم
+        dev_id = ADMINS[0] if ADMINS else 0
+        
+        # كليشة المستخدم العادي مع رابط المطور (HTML)
+        welcome_text = (
+            f"أهلاً بك في بوت ألسَايت الخاص بِ (<a href='tg://user?id={dev_id}'>{DEV_NAME}</a>)\n"
             "اكتب رسالتك هُنا وراح توصل للمطور مباشرة، وراح يرد بأقرب وقت بخصوص التنصيب أو أي استفسار إذا كانت هُنالك مُشكلة، ."
+        )
+        
+        # استخدام HTML لتفعيل الرابط
+        await update.message.reply_text(
+            welcome_text,
+            parse_mode="HTML"
         )
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
