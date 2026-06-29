@@ -1,120 +1,90 @@
 import os
-import json
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, constants
-from telegram.ext import Application, MessageHandler, CommandHandler, CallbackQueryHandler, ContextTypes, filters
-from telegram.error import BadRequest
+from telegram.ext import Application, MessageHandler, CommandHandler, ContextTypes, filters
 
+# إعدادات التسجيل (Logs)
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
-# جلب المتغيرات
+# المتغيرات (تأكد من إضافتها في Railway)
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-ADMINS = [int(x) for x in os.environ.get("ADMIN_ID", "").split(",") if x.strip()]
+ADMIN_ID = int(os.environ.get("ADMIN_ID"))
 DEV_NAME = os.environ.get("DEV_NAME", "المطور")
 
-DATA_FILE = "bot_data.json"
-
-def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {"subscribers": [], "force_channel": None}
-
-def save_data(data):
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
-
-bot_data = load_data()
+# تخزين الربط (عشان نعرف نرد على مين)
 forwarded_map = {}
-admin_states = {}
-
-async def check_force_sub(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    channel = bot_data.get("force_channel")
-    if not channel: return True
-    try:
-        member = await context.bot.get_chat_member(chat_id=channel, user_id=user_id)
-        return member.status not in ['left', 'kicked']
-    except: return True
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if user.id not in bot_data["subscribers"]:
-        bot_data["subscribers"].append(user.id)
-        save_data(bot_data)
 
-    if user.id in ADMINS:
+    # لو الشخص هو المطور (يظهر له لوحة التحكم)
+    if user.id == ADMIN_ID:
         keyboard = [
-            [InlineKeyboardButton("معلومات البوت 🤖", callback_data="bot_info")],
-            [InlineKeyboardButton("عدد المشتركين 👥", callback_data="sub_count")],
-            [InlineKeyboardButton("تعيين قناة اشتراك 📢", callback_data="set_channel"), 
-             InlineKeyboardButton("حذف القناة 🗑️", callback_data="del_channel")]
+            [InlineKeyboardButton("إحصائيات البوت 📊", callback_data="stats")],
+            [InlineKeyboardButton("إضافة قناة إجبارية 📢", callback_data="set_channel")]
         ]
-        await update.message.reply_text("مرحباً مطوري، إليك لوحة التحكم:", reply_markup=InlineKeyboardMarkup(keyboard))
-    else:
-        is_subbed = await check_force_sub(user.id, context)
-        if not is_subbed:
-            channel = bot_data.get("force_channel")
-            kb = [[InlineKeyboardButton("اشترك بالقناة 📢", url=f"https://t.me/{channel.replace('@', '')}")]]
-            await update.message.reply_text("عذراً، اشترك بالقناة أولاً.", reply_markup=InlineKeyboardMarkup(kb))
-            return
+        await update.message.reply_text("أهلاً بك يا مطور، هذه هي لوحة التحكم الخاصة بك:", reply_markup=InlineKeyboardMarkup(keyboard))
+        return
 
-        dev_id = ADMINS[0]
-        # استخدام الرابط المباشر لتيليجرام
-        welcome_text = f"أهلاً بك في بوت ألسَايت الخاص بِ [{DEV_NAME}](tg://user?id={dev_id})\nاكتب رسالتك هُنا وراح توصل للمطور مباشرة."
-        
-        await update.message.reply_text(
-            welcome_text,
-            parse_mode=constants.ParseMode.MARKDOWN
-        )
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if query.from_user.id not in ADMINS: return
-
-    if query.data == "bot_info":
-        await query.edit_message_text(f"المشتركين: {len(bot_data['subscribers'])}\nالقناة: {bot_data.get('force_channel')}")
-    elif query.data == "sub_count":
-        await query.edit_message_text(f"عدد المشتركين: {len(bot_data['subscribers'])}")
-    elif query.data == "set_channel":
-        admin_states[query.from_user.id] = "waiting_for_channel"
-        await query.edit_message_text("أرسل معرف القناة الآن (@channel):")
-    elif query.data == "del_channel":
-        bot_data["force_channel"] = None
-        save_data(bot_data)
-        await query.edit_message_text("تم حذف القناة.")
+    # إذا كان مستخدم عادي (يظهر له كليشة الترحيب)
+    # الرابط هنا يربط الاسم ببروفايل المطور باستخدام ID الخاص به
+    welcome_text = (
+        f"أهلاً بك في بوت ألسَايت الخاص بِ (<a href='tg://user?id={ADMIN_ID}'>{DEV_NAME}</a>)\n"
+        "اكتب رسالتك هُنا وراح توصل للمطور مباشرة، وراح يرد بأقرب وقت بخصوص التنصيب أو أي استفسار إذا كانت هُنالك مُشكلة، ."
+    )
+    
+    await update.message.reply_text(
+        welcome_text,
+        parse_mode=constants.ParseMode.HTML
+    )
 
 async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     msg = update.message
 
-    if user.id in ADMINS and admin_states.get(user.id) == "waiting_for_channel":
-        bot_data["force_channel"] = msg.text
-        save_data(bot_data)
-        admin_states.pop(user.id)
-        await msg.reply_text("تم حفظ القناة.")
+    # لو الرسالة جاية من المطور (رد على مستخدم)
+    if user.id == ADMIN_ID:
+        if msg.reply_to_message:
+            original_id = msg.reply_to_message.message_id
+            target_user_id = forwarded_map.get(original_id)
+            if target_user_id:
+                try:
+                    await context.bot.copy_message(
+                        chat_id=target_user_id,
+                        from_chat_id=ADMIN_ID,
+                        message_id=msg.message_id,
+                    )
+                    await msg.reply_text("✅ تم إرسال الرد للمستخدم.")
+                except Exception as e:
+                    await msg.reply_text(f"❌ فشل الإرسال: {e}")
+            else:
+                await msg.reply_text("⚠️ لم أتمكن من العثور على المستخدم (قد يكون البوت أعاد التشغيل).")
         return
 
-    if user.id in ADMINS and msg.reply_to_message:
-        target_id = forwarded_map.get(msg.reply_to_message.message_id)
-        if target_id:
-            await context.bot.copy_message(target_id, from_chat_id=user.id, message_id=msg.message_id)
-            await msg.reply_text("تم الإرسال.")
-        return
-
-    # توجيه الرسالة
-    for admin_id in ADMINS:
-        fwd = await context.bot.copy_message(admin_id, from_chat_id=msg.chat_id, message_id=msg.message_id)
-        forwarded_map[fwd.message_id] = user.id
-    await msg.reply_text("تم استلام رسالتك.")
+    # لو الرسالة جاية من مستخدم عادي -> إرسالها للمطور
+    info = f"📩 رسالة من: {user.full_name} (@{user.username or 'لا يوجد'})\nID: {user.id}"
+    try:
+        await context.bot.send_message(chat_id=ADMIN_ID, text=info)
+        forwarded = await context.bot.copy_message(
+            chat_id=ADMIN_ID,
+            from_chat_id=msg.chat_id,
+            message_id=msg.message_id,
+        )
+        forwarded_map[forwarded.message_id] = user.id
+        await msg.reply_text("✅ تم استلام رسالتك، راح يتم الرد عليك قريبًا.")
+    except Exception as e:
+        log.error(f"Error forwarding message: {e}")
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
+    
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_user_message))
+    
+    log.info("البوت يعمل الآن...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
+
