@@ -10,21 +10,33 @@ FORCE_SUB_CHANNEL = os.environ.get("FORCE_SUB_CHANNEL", "")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ----------------- قاعدة البيانات -----------------
+# ----------------- قاعدة البيانات (JSON) -----------------
 DB_FILE = "bot_data.json"
 
 def load_data():
+    default_data = {
+        "users": [],
+        "modes": {},
+        "bot_name": "بوت التواصل الرسمي",
+        "dev_name": "المطور",
+        "dev_link": "https://t.me/CC99V"
+    }
     if not os.path.exists(DB_FILE):
-        return {"users": [], "modes": {}}
+        return default_data
     try:
-        with open(DB_FILE, "r") as f:
-            return json.load(f)
+        with open(DB_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            # دمج الخيارات الافتراضية في حال وجود مفاتيح ناقصة
+            for key, val in default_data.items():
+                if key not in data:
+                    data[key] = val
+            return data
     except:
-        return {"users": [], "modes": {}}
+        return default_data
 
 def save_data(data):
-    with open(DB_FILE, "w") as f:
-        json.dump(data, f)
+    with open(DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
 
 # ----------------- دالة فحص الاشتراك -----------------
 def check_subscription(user_id):
@@ -40,8 +52,22 @@ def check_subscription(user_id):
         return False
     except Exception as e:
         print(f"Error checking subscription: {e}")
-        # في حال وجود مشكلة في صلاحيات البوت بالقناة نمرر المستخدم مؤقتاً لكي لا يتعطل البوت
         return True
+
+# ----------------- لوحة التحكم والإعدادات للأدمن -----------------
+def get_admin_keyboard():
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("📊 إحصائيات البوت", callback_data="bot_stats"))
+    markup.add(InlineKeyboardButton("⚙️ إعدادات الاسم والمطور", callback_data="bot_settings"))
+    return markup
+
+def get_settings_keyboard():
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("✏️ تغيير اسم البوت", callback_data="set_bot_name"))
+    markup.add(InlineKeyboardButton("👤 تغيير اسم المطور", callback_data="set_dev_name"))
+    markup.add(InlineKeyboardButton("🔗 تغيير رابط/يوزر المطور", callback_data="set_dev_link"))
+    markup.add(InlineKeyboardButton("🔙 العودة للوحة الرئيسية", callback_data="admin_home"))
+    return markup
 
 # ----------------- أوامر البوت -----------------
 @bot.message_handler(commands=['start'])
@@ -53,19 +79,17 @@ def start_command(message):
         data["users"].append(user_id)
         save_data(data)
 
-    # 1. الاستثناء الفوري للمطور (الأدمن)
+    # 1. لوحة المطور (الأدمن)
     if user_id == ADMIN_ID:
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("📊 إحصائيات البوت", callback_data="bot_stats"))
-        bot.send_message(user_id, "أهلاً بك أيها المطور في لوحة التحكم الخاصة بك ⚙️", reply_markup=markup)
+        bot.send_message(user_id, "أهلاً بك أيها المطور في لوحة التحكم الخاصة بك ⚙️", reply_markup=get_admin_keyboard())
         return
 
-    # 2. فحص الاشتراك الإجباري لباقي المستخدمين
+    # 2. فحص الاشتراك الإجباري للمستخدمين
     if not check_subscription(user_id):
         channel_clean = FORCE_SUB_CHANNEL.replace('@', '')
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("اشترك في القناة أولاً 📢", url=f"https://t.me/{channel_clean}"))
-        bot.send_message(user_id, "عذراً، يجب عليك الاشتراك في قناة السورس أولاً لتتمكن من استخدام البوت.", reply_markup=markup)
+        bot.send_message(user_id, "عذراً، يجب عليك الاشتراك في قناة المشروع أولاً لتتمكن من استخدام البوت.", reply_markup=markup)
         return
 
     # 3. واجهة المستخدم العادي
@@ -75,24 +99,68 @@ def start_command(message):
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton(f"تغيير الوضع (الحالي: {mode_text})", callback_data="toggle_mode"))
     
-    welcome_text = (
-        "أهلاً بك في بوت التواصل الخاص ب مصطفى السرمدي 👋\n\n"
-        "أرسل رسالتك وسيتم إيصالها للمطور مباشرة.\n"
-        "يمكنك التبديل بين إرسال الرسالة باسمك أو بشكل مخفي من الزر أدناه."
-    )
-    bot.send_message(user_id, welcome_text, reply_markup=markup)
+    bot_name = data.get("bot_name", "بوت التواصل الرسمي")
+    dev_name = data.get("dev_name", "المطور")
+    dev_link = data.get("dev_link", "https://t.me/CC99V")
 
+    welcome_text = (
+        f"أهلاً بك في **[{bot_name}]** 👋\n"
+        f"تطوير وإدارة: [{dev_name}]({dev_link})\n\n"
+        f"أرسل رسالتك (نص، صورة، فيديو، ملف) وسيتم إيصالها للمطور مباشرة.\n"
+        f"يمكنك التبديل بين إرسال الرسالة باسمك أو بشكل مخفي من الزر أدناه."
+    )
+    bot.send_message(user_id, welcome_text, reply_markup=markup, parse_mode="Markdown", disable_web_page_preview=True)
+
+# ----------------- معالجة أزرار الأنلاين (Callbacks) -----------------
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
     user_id = call.from_user.id
     data = load_data()
     
-    if call.data == "bot_stats" and user_id == ADMIN_ID:
-        users_count = len(data["users"])
-        bot.edit_message_text(f"📊 **إحصائيات البوت:**\n\n👥 إجمالي المستخدمين: {users_count} مستخدم.", 
-                              chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
-        
-    elif call.data == "toggle_mode":
+    if user_id == ADMIN_ID:
+        if call.data == "admin_home":
+            bot.edit_message_text("أهلاً بك أيها المطور في لوحة التحكم الخاصة بك ⚙️", 
+                                  chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=get_admin_keyboard())
+            return
+            
+        elif call.data == "bot_stats":
+            users_count = len(data["users"])
+            bot.edit_message_text(f"📊 **إحصائيات البوت:**\n\n👥 إجمالي المستخدمين: {users_count} مستخدم.", 
+                                  chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=get_admin_keyboard(), parse_mode="Markdown")
+            return
+
+        elif call.data == "bot_settings":
+            bot_name = data.get("bot_name", "غير محدد")
+            dev_name = data.get("dev_name", "غير محدد")
+            dev_link = data.get("dev_link", "غير محدد")
+            
+            info_text = (
+                "⚙️ **الإعدادات الحالية للبوت:**\n\n"
+                f"🤖 **اسم البوت:** {bot_name}\n"
+                f"👤 **اسم المطور:** {dev_name}\n"
+                f"🔗 **رابط/يوزر المطور:** {dev_link}\n\n"
+                "اختر من الأزرار أدناه للتعديل:"
+            )
+            bot.edit_message_text(info_text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=get_settings_keyboard(), parse_mode="Markdown")
+            return
+
+        elif call.data == "set_bot_name":
+            msg = bot.send_message(call.message.chat.id, "أرسل الآن **اسم البوت الجديد**:", reply_markup=ForceReply(selective=False))
+            bot.register_next_step_handler(msg, save_bot_name)
+            return
+
+        elif call.data == "set_dev_name":
+            msg = bot.send_message(call.message.chat.id, "أرسل الآن **اسم المطور الظاهر** (مثال: مصطفى السرمدي):", reply_markup=ForceReply(selective=False))
+            bot.register_next_step_handler(msg, save_dev_name)
+            return
+
+        elif call.data == "set_dev_link":
+            msg = bot.send_message(call.message.chat.id, "أرسل الآن **يوزر أو رابط المطور** (مثال: `@CC99V` أو رابط أو ID):", reply_markup=ForceReply(selective=False))
+            bot.register_next_step_handler(msg, save_dev_link)
+            return
+
+    # أزرار المستخدمين العاديين
+    if call.data == "toggle_mode":
         current_mode = data["modes"].get(str(user_id), "known")
         new_mode = "anonymous" if current_mode == "known" else "known"
         data["modes"][str(user_id)] = new_mode
@@ -110,6 +178,37 @@ def callback_query(call):
         msg = bot.send_message(call.message.chat.id, f"أرسل ردك الآن للمستخدم:\n`{target_user}`", reply_markup=ForceReply(selective=False))
         bot.register_next_step_handler(msg, send_reply_to_user, target_user)
 
+# ----------------- دوال حفظ الإعدادات من الأدمن -----------------
+def save_bot_name(message):
+    data = load_data()
+    data["bot_name"] = message.text.strip()
+    save_data(data)
+    bot.reply_to(message, f"✅ تم حفظ اسم البوت بنجاح: **{data['bot_name']}**", parse_mode="Markdown", reply_markup=get_admin_keyboard())
+
+def save_dev_name(message):
+    data = load_data()
+    data["dev_name"] = message.text.strip()
+    save_data(data)
+    bot.reply_to(message, f"✅ تم حفظ اسم المطور بنجاح: **{data['dev_name']}**", parse_mode="Markdown", reply_markup=get_admin_keyboard())
+
+def save_dev_link(message):
+    data = load_data()
+    raw_input = message.text.strip()
+    
+    # معالجة المدخلات (سواء كانت يوزر أو رابط أو أيدي)
+    if raw_input.startswith("http://") or raw_input.startswith("https://"):
+        link = raw_input
+    elif raw_input.startswith("@"):
+        link = f"https://t.me/{raw_input.replace('@', '')}"
+    elif raw_input.isdigit():
+        link = f"tg://user?id={raw_input}"
+    else:
+        link = f"https://t.me/{raw_input}"
+
+    data["dev_link"] = link
+    save_data(data)
+    bot.reply_to(message, f"✅ تم حفظ رابط المطور بنجاح: {link}", reply_markup=get_admin_keyboard())
+
 def send_reply_to_user(message, target_user):
     try:
         bot.copy_message(target_user, message.chat.id, message.message_id)
@@ -117,6 +216,7 @@ def send_reply_to_user(message, target_user):
     except Exception as e:
         bot.reply_to(message, f"❌ حدث خطأ، ربما قام المستخدم بحظر البوت.\n{e}")
 
+# ----------------- استقبال ورسائل التواصل -----------------
 @bot.message_handler(content_types=['text', 'photo', 'video', 'document', 'audio', 'voice', 'sticker'])
 def handle_messages(message):
     user_id = message.from_user.id
@@ -148,5 +248,5 @@ def handle_messages(message):
         bot.copy_message(ADMIN_ID, message.chat.id, message.message_id, reply_markup=markup)
 
 if __name__ == "__main__":
-    print("Bot is running...")
+    print("Bot is running with dynamic admin settings...")
     bot.infinity_polling(skip_pending=True)
