@@ -1,194 +1,149 @@
 import os
 import json
-import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, MessageHandler, CommandHandler, CallbackQueryHandler, ContextTypes, filters
-from telegram.error import BadRequest
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ForceReply
 
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger(__name__)
-
-# جلب المتغيرات من بيئة الاستضافة (Railway)
+# ----------------- الڤارات (توضع في المنصة فقط) -----------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-# دعم آيدي واحد أو أكثر (في حال أردت إضافة صديقك معك بنفس البوت مستقبلاً)
-ADMINS = [int(x) for x in os.environ.get("ADMIN_ID", "").split(",") if x.strip()]
-# اسم المطور الذي سيظهر في كليشة الترحيب
-DEV_NAME = os.environ.get("DEV_NAME", "المطور")
+ADMIN_ID = int(os.environ.get("ADMIN_ID"))
+# معرف قناة الاشتراك الإجباري (مثال: @CC99V)
+FORCE_SUB_CHANNEL = os.environ.get("FORCE_SUB_CHANNEL") 
 
-# ملف حفظ بيانات البوت (عدد المشتركين والقناة الإجبارية)
-DATA_FILE = "bot_data.json"
+bot = telebot.TeleBot(BOT_TOKEN)
+
+# ----------------- قاعدة بيانات بسيطة (JSON) -----------------
+DB_FILE = "bot_data.json"
 
 def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {"subscribers": [], "force_channel": None}
+    if not os.path.exists(DB_FILE):
+        return {"users": [], "modes": {}}
+    with open(DB_FILE, "r") as f:
+        return json.load(f)
 
 def save_data(data):
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+    with open(DB_FILE, "w") as f:
+        json.dump(data, f)
 
-bot_data = load_data()
-forwarded_map = {}
-admin_states = {} # لتتبع حالة المطور (مثل انتظار إرسال معرف القناة)
-
-async def check_force_sub(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    channel = bot_data.get("force_channel")
-    if not channel:
-        return True # لا توجد قناة مفروضة
+# ----------------- دوال مساعدة -----------------
+def check_subscription(user_id):
+    if not FORCE_SUB_CHANNEL:
+        return True
     try:
-        member = await context.bot.get_chat_member(chat_id=channel, user_id=user_id)
-        if member.status in ['left', 'kicked']:
-            return False
-        return True
-    except BadRequest:
-        # إذا كان البوت ليس أدمن أو القناة غير صحيحة، نسمح للمستخدم بالدخول لتجنب توقف البوت
-        return True
-    except Exception as e:
-        log.error(f"Error checking sub: {e}")
-        return True
+        status = bot.get_chat_member(FORCE_SUB_CHANNEL, user_id).status
+        if status in ['member', 'administrator', 'creator']:
+            return True
+        return False
+    except:
+        return False # في حال لم يكن البوت ادمن في القناة
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
+# ----------------- أوامر البوت -----------------
+@bot.message_handler(commands=['start'])
+def start_command(message):
+    user_id = message.from_user.id
+    data = load_data()
     
-    # تسجيل المشترك الجديد
-    if user.id not in bot_data["subscribers"]:
-        bot_data["subscribers"].append(user.id)
-        save_data(bot_data)
+    # حفظ المستخدم في الإحصائيات
+    if user_id not in data["users"]:
+        data["users"].append(user_id)
+        save_data(data)
 
-    if user.id in ADMINS:
-        # كليشة ولستة المطور
-        keyboard = [
-            [InlineKeyboardButton("معلومات البوت 🤖", callback_data="bot_info")],
-            [InlineKeyboardButton("عدد المشتركين 👥", callback_data="sub_count")],
-            [InlineKeyboardButton("تعيين قناة اشتراك 📢", callback_data="set_channel"), 
-             InlineKeyboardButton("حذف القناة 🗑️", callback_data="del_channel")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(
-            f"أهلاً بك يا مطورنا الغالي 👑\n\nإليك لوحة التحكم الخاصة بك:",
-            reply_markup=reply_markup
-        )
+    if not check_subscription(user_id):
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("اشترك في القناة أولاً 📢", url=f"https://t.me/{FORCE_SUB_CHANNEL.replace('@', '')}"))
+        bot.send_message(user_id, "عذراً، يجب عليك الاشتراك في قناة المشروع أولاً لتتمكن من استخدام البوت.", reply_markup=markup)
+        return
+
+    if user_id == ADMIN_ID:
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("📊 إحصائيات البوت", callback_data="bot_stats"))
+        bot.send_message(user_id, "أهلاً بك أيها المطور في لوحة التحكم الخاصة بك ⚙️", reply_markup=markup)
     else:
-        # فحص الاشتراك للمستخدمين العاديين
-        is_subbed = await check_force_sub(user.id, context)
-        if not is_subbed:
-            channel = bot_data.get("force_channel")
-            keyboard = [[InlineKeyboardButton("اضغط هنا للاشتراك 📢", url=f"https://t.me/{channel.replace('@', '')}")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text(
-                "عذراً عزيزي، يجب عليك الاشتراك في قناة البوت أولاً لتتمكن من إرسال رسائلك.",
-                reply_markup=reply_markup
-            )
-            return
-
-        # كليشة المستخدم العادي
-        await update.message.reply_text(
-            f"أهلاً بك في بوت ألسَايت الخاص بِ ({DEV_NAME})\n"
-            "اكتب رسالتك هُنا وراح توصل للمطور مباشرة، وراح يرد بأقرب وقت بخصوص التنصيب أو أي استفسار إذا كانت هُنالك مُشكلة، ."
-        )
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-    await query.answer()
-
-    if user_id not in ADMINS:
-        return
-
-    data = query.data
-    if data == "bot_info":
-        channel = bot_data.get("force_channel") or "لا توجد"
-        text = (
-            f"🤖 **معلومات البوت**:\n\n"
-            f"▪️ عدد المشتركين الكلي: {len(bot_data['subscribers'])}\n"
-            f"▪️ قناة الاشتراك الإجباري: {channel}"
-        )
-        await query.edit_message_text(text, parse_mode="Markdown")
+        # تحديد وضع التواصل الافتراضي (معروف)
+        current_mode = data["modes"].get(str(user_id), "known")
+        mode_text = "المعروف 👤" if current_mode == "known" else "الخفي 👻"
         
-    elif data == "sub_count":
-        count = len(bot_data['subscribers'])
-        await query.edit_message_text(f"👥 عدد المشتركين الحالي: {count}")
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton(f"تغيير الوضع (الحالي: {mode_text})", callback_data="toggle_mode"))
         
-    elif data == "set_channel":
-        admin_states[user_id] = "waiting_for_channel"
-        await query.edit_message_text("حسناً، أرسل الآن معرف القناة (يجب أن يبدأ بـ @)\nمثال: @mychannel\n\n*تأكد من رفع البوت كأدمن في القناة أولاً!*", parse_mode="Markdown")
-        
-    elif data == "del_channel":
-        bot_data["force_channel"] = None
-        save_data(bot_data)
-        await query.edit_message_text("✅ تم إيقاف الاشتراك الإجباري وحذف القناة بنجاح.")
-
-async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    msg = update.message
-
-    # 1. إذا كان المطور في وضع "إضافة قناة"
-    if user.id in ADMINS and admin_states.get(user.id) == "waiting_for_channel":
-        if msg.text and msg.text.startswith("@"):
-            bot_data["force_channel"] = msg.text
-            save_data(bot_data)
-            admin_states.pop(user.id, None)
-            await msg.reply_text(f"✅ تم تعيين القناة {msg.text} كقناة اشتراك إجباري بنجاح.")
-        else:
-            await msg.reply_text("❌ المعرف غير صحيح، يرجى إرسال معرف يبدأ بـ @")
-        return
-
-    # 2. إذا كانت الرسالة من المطور (رد على مستخدم)
-    if user.id in ADMINS:
-        if msg.reply_to_message:
-            original_id = msg.reply_to_message.message_id
-            target_user_id = forwarded_map.get(original_id)
-            if target_user_id:
-                try:
-                    await context.bot.copy_message(
-                        chat_id=target_user_id,
-                        from_chat_id=user.id,
-                        message_id=msg.message_id,
-                    )
-                    await msg.reply_text("✅ تم إرسال الرد للمستخدم.")
-                except Exception as e:
-                    await msg.reply_text(f"❌ فشل الإرسال (قد يكون المستخدم حظر البوت): {e}")
-            else:
-                await msg.reply_text("⚠️ ما عرفت لمين أرسل، الرسالة قديمة أو البوت أعاد التشغيل.")
-        return
-
-    # 3. رسالة من مستخدم عادي
-    # فحص الاشتراك قبل إرسال الرسالة للمطور
-    is_subbed = await check_force_sub(user.id, context)
-    if not is_subbed:
-        channel = bot_data.get("force_channel")
-        keyboard = [[InlineKeyboardButton("اضغط هنا للاشتراك 📢", url=f"https://t.me/{channel.replace('@', '')}")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await msg.reply_text(
-            "عذراً، يجب عليك الاشتراك في قناة البوت أولاً.",
-            reply_markup=reply_markup
+        welcome_text = (
+            "أهلاً بك في بوت التواصل الخاص بالمشروع 👋\n\n"
+            "أرسل رسالتك (نص، صورة، فيديو، ملف) وسيتم إيصالها للمطور مباشرة.\n"
+            "يمكنك التبديل بين إرسال الرسالة باسمك أو بشكل مخفي من الزر أدناه."
         )
+        bot.send_message(user_id, welcome_text, reply_markup=markup)
+
+# ----------------- التعامل مع الأزرار الشفافة (الأنلاين) -----------------
+@bot.callback_query_handler(func=lambda call: True)
+def callback_query(call):
+    user_id = call.from_user.id
+    data = load_data()
+    
+    if call.data == "bot_stats" and user_id == ADMIN_ID:
+        users_count = len(data["users"])
+        bot.edit_message_text(f"📊 **إحصائيات البوت:**\n\n👥 إجمالي المستخدمين: {users_count} مستخدم.", 
+                              chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
+        
+    elif call.data == "toggle_mode":
+        current_mode = data["modes"].get(str(user_id), "known")
+        new_mode = "anonymous" if current_mode == "known" else "known"
+        data["modes"][str(user_id)] = new_mode
+        save_data(data)
+        
+        mode_text = "المعروف 👤" if new_mode == "known" else "الخفي 👻"
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton(f"تغيير الوضع (الحالي: {mode_text})", callback_data="toggle_mode"))
+        
+        bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+        bot.answer_callback_query(call.id, f"تم تغيير وضع التواصل إلى: {mode_text}")
+        
+    elif call.data.startswith("reply_"):
+        # زر الرد الخاص بالأدمن على الرسائل المخفية
+        target_user = call.data.split("_")[1]
+        msg = bot.send_message(call.message.chat.id, f"أرسل ردك الآن للمستخدم:\n`{target_user}`", reply_markup=ForceReply(selective=False))
+        bot.register_next_step_handler(msg, send_reply_to_user, target_user)
+
+def send_reply_to_user(message, target_user):
+    try:
+        bot.copy_message(target_user, message.chat.id, message.message_id)
+        bot.reply_to(message, "✅ تم إرسال ردك للمستخدم بنجاح.")
+    except Exception as e:
+        bot.reply_to(message, f"❌ حدث خطأ، ربما قام المستخدم بحظر البوت.\n{e}")
+
+# ----------------- استلام الرسائل وإرسالها للأدمن -----------------
+@bot.message_handler(content_types=['text', 'photo', 'video', 'document', 'audio', 'voice', 'sticker'])
+def handle_messages(message):
+    user_id = message.from_user.id
+    
+    if user_id == ADMIN_ID:
+        # إذا قام الأدمن بالرد المباشر على رسالة محولة (التواصل المعروف)
+        if message.reply_to_message and message.reply_to_message.forward_from:
+            target_user = message.reply_to_message.forward_from.id
+            try:
+                bot.copy_message(target_user, message.chat.id, message.message_id)
+                bot.reply_to(message, "✅ تم إرسال ردك بنجاح.")
+            except:
+                bot.reply_to(message, "❌ لم أتمكن من إرسال الرد.")
         return
 
-    # توجيه الرسالة للمطورين
-    info = f"📩 رسالة من: {user.full_name} (@{user.username or 'لا يوجد'})\nID: {user.id}"
-    for admin_id in ADMINS:
-        try:
-            await context.bot.send_message(chat_id=admin_id, text=info)
-            forwarded = await context.bot.copy_message(
-                chat_id=admin_id,
-                from_chat_id=msg.chat_id,
-                message_id=msg.message_id,
-            )
-            forwarded_map[forwarded.message_id] = user.id
-        except Exception as e:
-            log.error(f"Could not forward to admin {admin_id}: {e}")
+    # فحص الاشتراك الإجباري للمستخدمين
+    if not check_subscription(user_id):
+        bot.send_message(user_id, "📢 يجب عليك الاشتراك في القناة أولاً لكي تصل رسالتك.")
+        return
 
-    await msg.reply_text("✅ تم استلام رسالتك، راح يتم الرد عليك قريبًا.")
+    data = load_data()
+    user_mode = data["modes"].get(str(user_id), "known")
 
-def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_user_message))
-    log.info("Bot is running...")
-    app.run_polling()
+    bot.send_message(user_id, "✅ تم استلام رسالتك وإرسالها، انتظر الرد...")
 
-if __name__ == "__main__":
-    main()
+    if user_mode == "known":
+        # تواصل معروف: تحويل الرسالة (Forward)
+        bot.forward_message(ADMIN_ID, message.chat.id, message.message_id)
+    else:
+        # تواصل خفي: نسخ الرسالة (Copy) وإضافة زر للرد
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("رد على هذا المستخدم المخفي 👻", callback_data=f"reply_{user_id}"))
+        bot.copy_message(ADMIN_ID, message.chat.id, message.message_id, reply_markup=markup)
+
+# تشغيل البوت
+print("Bot is running...")
+bot.infinity_polling()
