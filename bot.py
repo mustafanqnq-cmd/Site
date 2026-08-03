@@ -2,11 +2,24 @@ import os
 import json
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ForceReply
+import threading
+from flask import Flask
+
+# ----------------- إعداد خادم الويب (لإبقاء البوت مستيقظاً) -----------------
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is awake and running!"
+
+def run_server():
+    # المنصة ستقوم بتحديد البورت تلقائياً، وإن لم تفعل نستخدم 8080
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
 
 # ----------------- الڤارات (توضع في المنصة فقط) -----------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = int(os.environ.get("ADMIN_ID"))
-# معرف قناة الاشتراك الإجباري (مثال: @CC99V)
 FORCE_SUB_CHANNEL = os.environ.get("FORCE_SUB_CHANNEL") 
 
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -34,7 +47,7 @@ def check_subscription(user_id):
             return True
         return False
     except:
-        return False # في حال لم يكن البوت ادمن في القناة
+        return False
 
 # ----------------- أوامر البوت -----------------
 @bot.message_handler(commands=['start'])
@@ -42,7 +55,6 @@ def start_command(message):
     user_id = message.from_user.id
     data = load_data()
     
-    # حفظ المستخدم في الإحصائيات
     if user_id not in data["users"]:
         data["users"].append(user_id)
         save_data(data)
@@ -58,7 +70,6 @@ def start_command(message):
         markup.add(InlineKeyboardButton("📊 إحصائيات البوت", callback_data="bot_stats"))
         bot.send_message(user_id, "أهلاً بك أيها المطور في لوحة التحكم الخاصة بك ⚙️", reply_markup=markup)
     else:
-        # تحديد وضع التواصل الافتراضي (معروف)
         current_mode = data["modes"].get(str(user_id), "known")
         mode_text = "المعروف 👤" if current_mode == "known" else "الخفي 👻"
         
@@ -72,7 +83,6 @@ def start_command(message):
         )
         bot.send_message(user_id, welcome_text, reply_markup=markup)
 
-# ----------------- التعامل مع الأزرار الشفافة (الأنلاين) -----------------
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
     user_id = call.from_user.id
@@ -97,7 +107,6 @@ def callback_query(call):
         bot.answer_callback_query(call.id, f"تم تغيير وضع التواصل إلى: {mode_text}")
         
     elif call.data.startswith("reply_"):
-        # زر الرد الخاص بالأدمن على الرسائل المخفية
         target_user = call.data.split("_")[1]
         msg = bot.send_message(call.message.chat.id, f"أرسل ردك الآن للمستخدم:\n`{target_user}`", reply_markup=ForceReply(selective=False))
         bot.register_next_step_handler(msg, send_reply_to_user, target_user)
@@ -109,13 +118,11 @@ def send_reply_to_user(message, target_user):
     except Exception as e:
         bot.reply_to(message, f"❌ حدث خطأ، ربما قام المستخدم بحظر البوت.\n{e}")
 
-# ----------------- استلام الرسائل وإرسالها للأدمن -----------------
 @bot.message_handler(content_types=['text', 'photo', 'video', 'document', 'audio', 'voice', 'sticker'])
 def handle_messages(message):
     user_id = message.from_user.id
     
     if user_id == ADMIN_ID:
-        # إذا قام الأدمن بالرد المباشر على رسالة محولة (التواصل المعروف)
         if message.reply_to_message and message.reply_to_message.forward_from:
             target_user = message.reply_to_message.forward_from.id
             try:
@@ -125,7 +132,6 @@ def handle_messages(message):
                 bot.reply_to(message, "❌ لم أتمكن من إرسال الرد.")
         return
 
-    # فحص الاشتراك الإجباري للمستخدمين
     if not check_subscription(user_id):
         bot.send_message(user_id, "📢 يجب عليك الاشتراك في القناة أولاً لكي تصل رسالتك.")
         return
@@ -136,14 +142,18 @@ def handle_messages(message):
     bot.send_message(user_id, "✅ تم استلام رسالتك وإرسالها، انتظر الرد...")
 
     if user_mode == "known":
-        # تواصل معروف: تحويل الرسالة (Forward)
         bot.forward_message(ADMIN_ID, message.chat.id, message.message_id)
     else:
-        # تواصل خفي: نسخ الرسالة (Copy) وإضافة زر للرد
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("رد على هذا المستخدم المخفي 👻", callback_data=f"reply_{user_id}"))
         bot.copy_message(ADMIN_ID, message.chat.id, message.message_id, reply_markup=markup)
 
-# تشغيل البوت
-print("Bot is running...")
-bot.infinity_polling()
+# ----------------- التشغيل المزدوج -----------------
+if __name__ == "__main__":
+    # تشغيل خادم الويب في مسار خلفي
+    server_thread = threading.Thread(target=run_server)
+    server_thread.start()
+    
+    # تشغيل البوت
+    print("Bot is running...")
+    bot.infinity_polling()
