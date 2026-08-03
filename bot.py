@@ -2,52 +2,46 @@ import os
 import json
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ForceReply
-import threading
-from flask import Flask
 
-# ----------------- إعداد خادم الويب (لإبقاء البوت مستيقظاً) -----------------
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Bot is awake and running!"
-
-def run_server():
-    # المنصة ستقوم بتحديد البورت تلقائياً، وإن لم تفعل نستخدم 8080
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
-
-# ----------------- الڤارات (توضع في المنصة فقط) -----------------
+# ----------------- الڤارات -----------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-ADMIN_ID = int(os.environ.get("ADMIN_ID"))
-FORCE_SUB_CHANNEL = os.environ.get("FORCE_SUB_CHANNEL") 
+ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))
+FORCE_SUB_CHANNEL = os.environ.get("FORCE_SUB_CHANNEL", "")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ----------------- قاعدة بيانات بسيطة (JSON) -----------------
+# ----------------- قاعدة البيانات -----------------
 DB_FILE = "bot_data.json"
 
 def load_data():
     if not os.path.exists(DB_FILE):
         return {"users": [], "modes": {}}
-    with open(DB_FILE, "r") as f:
-        return json.load(f)
+    try:
+        with open(DB_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return {"users": [], "modes": {}}
 
 def save_data(data):
     with open(DB_FILE, "w") as f:
         json.dump(data, f)
 
-# ----------------- دوال مساعدة -----------------
+# ----------------- دالة فحص الاشتراك -----------------
 def check_subscription(user_id):
     if not FORCE_SUB_CHANNEL:
         return True
+    
+    channel = FORCE_SUB_CHANNEL if FORCE_SUB_CHANNEL.startswith("@") else f"@{FORCE_SUB_CHANNEL}"
+    
     try:
-        status = bot.get_chat_member(FORCE_SUB_CHANNEL, user_id).status
-        if status in ['member', 'administrator', 'creator']:
+        member = bot.get_chat_member(channel, user_id)
+        if member.status in ['member', 'administrator', 'creator']:
             return True
         return False
-    except:
-        return False
+    except Exception as e:
+        print(f"Error checking subscription: {e}")
+        # في حال وجود مشكلة في صلاحيات البوت بالقناة نمرر المستخدم مؤقتاً لكي لا يتعطل البوت
+        return True
 
 # ----------------- أوامر البوت -----------------
 @bot.message_handler(commands=['start'])
@@ -59,29 +53,34 @@ def start_command(message):
         data["users"].append(user_id)
         save_data(data)
 
-    if not check_subscription(user_id):
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("اشترك في القناة أولاً 📢", url=f"https://t.me/{FORCE_SUB_CHANNEL.replace('@', '')}"))
-        bot.send_message(user_id, "عذراً، يجب عليك الاشتراك في قناة المشروع أولاً لتتمكن من استخدام البوت.", reply_markup=markup)
-        return
-
+    # 1. الاستثناء الفوري للمطور (الأدمن)
     if user_id == ADMIN_ID:
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("📊 إحصائيات البوت", callback_data="bot_stats"))
         bot.send_message(user_id, "أهلاً بك أيها المطور في لوحة التحكم الخاصة بك ⚙️", reply_markup=markup)
-    else:
-        current_mode = data["modes"].get(str(user_id), "known")
-        mode_text = "المعروف 👤" if current_mode == "known" else "الخفي 👻"
-        
+        return
+
+    # 2. فحص الاشتراك الإجباري لباقي المستخدمين
+    if not check_subscription(user_id):
+        channel_clean = FORCE_SUB_CHANNEL.replace('@', '')
         markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton(f"تغيير الوضع (الحالي: {mode_text})", callback_data="toggle_mode"))
-        
-        welcome_text = (
-            "أهلاً بك في بوت التواصل الخاص بالمشروع 👋\n\n"
-            "أرسل رسالتك (نص، صورة، فيديو، ملف) وسيتم إيصالها للمطور مباشرة.\n"
-            "يمكنك التبديل بين إرسال الرسالة باسمك أو بشكل مخفي من الزر أدناه."
-        )
-        bot.send_message(user_id, welcome_text, reply_markup=markup)
+        markup.add(InlineKeyboardButton("اشترك في القناة أولاً 📢", url=f"https://t.me/{channel_clean}"))
+        bot.send_message(user_id, "عذراً، يجب عليك الاشتراك في قناة المشروع أولاً لتتمكن من استخدام البوت.", reply_markup=markup)
+        return
+
+    # 3. واجهة المستخدم العادي
+    current_mode = data["modes"].get(str(user_id), "known")
+    mode_text = "المعروف 👤" if current_mode == "known" else "الخفي 👻"
+    
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton(f"تغيير الوضع (الحالي: {mode_text})", callback_data="toggle_mode"))
+    
+    welcome_text = (
+        "أهلاً بك في بوت التواصل الخاص بالمشروع 👋\n\n"
+        "أرسل رسالتك (نص، صورة، فيديو، ملف) وسيتم إيصالها للمطور مباشرة.\n"
+        "يمكنك التبديل بين إرسال الرسالة باسمك أو بشكل مخفي من الزر أدناه."
+    )
+    bot.send_message(user_id, welcome_text, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
@@ -148,12 +147,6 @@ def handle_messages(message):
         markup.add(InlineKeyboardButton("رد على هذا المستخدم المخفي 👻", callback_data=f"reply_{user_id}"))
         bot.copy_message(ADMIN_ID, message.chat.id, message.message_id, reply_markup=markup)
 
-# ----------------- التشغيل المزدوج -----------------
 if __name__ == "__main__":
-    # تشغيل خادم الويب في مسار خلفي
-    server_thread = threading.Thread(target=run_server)
-    server_thread.start()
-    
-    # تشغيل البوت
     print("Bot is running...")
-    bot.infinity_polling()
+    bot.infinity_polling(skip_pending=True)
