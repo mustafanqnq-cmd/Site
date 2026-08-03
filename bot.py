@@ -65,7 +65,7 @@ def start_command(message):
         channel_clean = FORCE_SUB_CHANNEL.replace('@', '')
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("اشترك في القناة أولاً 📢", url=f"https://t.me/{channel_clean}"))
-        bot.send_message(user_id, "عذراً، يجب عليك الاشتراك في قناة المشروع أولاً لتتمكن من استخدام البوت.", reply_markup=markup)
+        bot.send_message(user_id, "عذراً، يجب عليك الاشتراك في قناة السورس أولاً لتتمكن من استخدام البوت.", reply_markup=markup)
         return
 
     # 3. واجهة المستخدم العادي
@@ -76,8 +76,8 @@ def start_command(message):
     markup.add(InlineKeyboardButton(f"تغيير الوضع (الحالي: {mode_text})", callback_data="toggle_mode"))
     
     welcome_text = (
-        "أهلاً بك في بوت التواصل الخاص بالمشروع 👋\n\n"
-        "أرسل رسالتك (نص، صورة، فيديو، ملف) وسيتم إيصالها للمطور مباشرة.\n"
+        "أهلاً بك في بوت التواصل الخاص ب مصطفى السرمدي 👋\n\n"
+        "أرسل رسالتك وسيتم إيصالها للمطور مباشرة.\n"
         "يمكنك التبديل بين إرسال الرسالة باسمك أو بشكل مخفي من الزر أدناه."
     )
     bot.send_message(user_id, welcome_text, reply_markup=markup)
